@@ -617,12 +617,16 @@ router.get('/qr/:id/image', admin, async (req, res) => {
 router.get('/audit', admin, (req, res) => {
   const where = [];
   const args = [];
-  if (req.query.action) where.push('a.action LIKE ?'), args.push(`%${req.query.action}%`);
-  if (req.query.actor) where.push('u.display_name LIKE ?'), args.push(`%${req.query.actor}%`);
-  const rows = db
-    .prepare(`SELECT a.*, u.display_name AS actor FROM audit_logs a LEFT JOIN users u ON u.id = a.actor_id ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY a.id DESC LIMIT 300`)
-    .all(...args);
-  res.json(rows);
+  const like = (v) => `%${String(v).trim().slice(0, 80).replace(/[%_\\]/g, (m) => `\\${m}`)}%`;
+  if (req.query.action) where.push("a.action LIKE ? ESCAPE '\\'"), args.push(like(req.query.action));
+  if (req.query.actor) where.push("u.display_name LIKE ? ESCAPE '\\'"), args.push(like(req.query.actor));
+  const from = `FROM audit_logs a LEFT JOIN users u ON u.id = a.actor_id ${where.length ? `WHERE ${where.join(' AND ')}` : ''}`;
+  const pageSize = [25, 50, 100].includes(Number(req.query.pageSize)) ? Number(req.query.pageSize) : 50;
+  const total = db.prepare(`SELECT COUNT(*) AS n ${from}`).get(...args).n;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(pages, Math.max(1, Math.floor(Number(req.query.page)) || 1));
+  const rows = db.prepare(`SELECT a.*, u.display_name AS actor ${from} ORDER BY a.id DESC LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize);
+  res.json({ total, page, pages, pageSize, rows });
 });
 
 router.get('/settings', admin, (_req, res) => res.json({ ...getSettings(), capacity: capacity() }));

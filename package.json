@@ -10,7 +10,7 @@
     "seed": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/seed.js",
     "reset-2fa": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env reset-2fa.mjs",
     "reset-password": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env reset-password.mjs",
-    "test": "node --disable-warning=ExperimentalWarning --test test/auth.test.js test/pds.test.js test/slots.test.js test/admin-delete.test.js test/live.test.js test/mfa-recovery.test.js"
+    "test": "node --disable-warning=ExperimentalWarning --test test/auth.test.js test/pds.test.js test/slots.test.js test/admin-delete.test.js test/live.test.js test/mfa-recovery.test.js test/audit.test.js"
   },
   "engines": {
     "node": ">=22.13"
