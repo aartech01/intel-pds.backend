@@ -12,6 +12,7 @@ const clients = new Set();
 const MAX_PER_KEY = 8; // open tabs per user (or per IP for guests)
 let pending = [];
 let timer = null;
+let origin = null; // browser tab whose request is being announced (X-Tab header), so its own echo can be marked
 
 export const EVERYONE = { all: true };
 export const USERS = { users: true };
@@ -33,7 +34,7 @@ function hears(c, a) {
 /** Queue topics for an audience. Everything published within 50 ms goes out as one event per connection. */
 export function publish(topics, audience) {
   if (!clients.size) return;
-  pending.push({ topics, audience });
+  pending.push({ topics, audience, origin });
   timer ??= setTimeout(flush, 50);
 }
 
@@ -43,8 +44,14 @@ function flush() {
   pending = [];
   for (const c of clients) {
     const topics = new Set();
-    for (const { topics: t, audience } of batch) if (hears(c, audience)) t.forEach((x) => topics.add(x));
-    if (topics.size) c.res.write(`data: ${JSON.stringify({ topics: [...topics] })}\n\n`);
+    let own = !!c.tab;
+    for (const { topics: t, audience, origin: from } of batch) {
+      if (!hears(c, audience)) continue;
+      t.forEach((x) => topics.add(x));
+      if (from !== c.tab) own = false;
+    }
+    // own: every change in this event came from this tab's own requests, which already reloaded what they changed.
+    if (topics.size) c.res.write(`data: ${JSON.stringify(own ? { topics: [...topics], own } : { topics: [...topics] })}\n\n`);
   }
 }
 
@@ -59,7 +66,7 @@ export function liveStream(req, res) {
 
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
   res.write('event: ready\ndata: {}\n\n');
-  const c = { res, key, userId: req.user?.id ?? null, staff: isStaff(req.user) };
+  const c = { res, key, userId: req.user?.id ?? null, staff: isStaff(req.user), tab: tabId(req.query.tab) };
   clients.add(c);
   // Comment lines keep proxies (Render, nginx) from closing an idle stream.
   const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
@@ -73,6 +80,8 @@ export function liveStream(req, res) {
 export function disconnectUser(userId) {
   for (const c of clients) if (c.userId === userId) c.res.end();
 }
+
+const tabId = (v) => (typeof v === 'string' && /^[\w-]{8,64}$/.test(v) ? v : null);
 
 // ---------- every successful write announces what it changed ----------
 const CODE = /(PDS-\d{4}-\d+)/i;
@@ -95,12 +104,16 @@ export function announceWrites(req, res, next) {
   const path = req.path;
   const before = pdsFor(path);
   const actor = req.user?.id ?? null;
+  const tab = tabId(req.get('x-tab'));
   res.on('finish', () => {
     if (res.statusCode >= 400) return;
+    origin = tab;
     try {
       announce(req.method, path, before, actor);
     } catch (e) {
       console.error('[live]', e.message);
+    } finally {
+      origin = null;
     }
   });
   next();
@@ -110,7 +123,8 @@ function announce(method, path, before, actor) {
   publish(['audit'], STAFF);
 
   if (path.startsWith('/auth/')) {
-    publish(['users'], STAFF); // sign-ups, verifications and logins show on the Users page
+    // A sign-up changes the user counts (Users page + admin home); a login only the Users page's "last login".
+    publish([path === '/auth/signup' ? 'users' : 'logins'], STAFF);
     if (path === '/auth/logout-all') disconnectUser(actor);
     return;
   }

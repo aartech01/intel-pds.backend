@@ -87,3 +87,86 @@ test('guests hear slot calendar changes, including ones made by the scheduler', 
   await settle();
   assert.ok(guest.has('slots'), `guest heard ${[...guest]}`);
 });
+
+/** Opens /api/live for one browser tab and keeps every event it receives, in order. */
+async function listenTab(client, tab) {
+  const ctrl = new AbortController();
+  streams.push(ctrl);
+  const res = await fetch(`${base}/api/live?tab=${tab}`, { headers: { cookie: client.cookieHeader() }, signal: ctrl.signal });
+  const events = [];
+  let ready;
+  const isReady = new Promise((r) => (ready = r));
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  (async () => {
+    let buf = '';
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += value;
+        for (let i = buf.indexOf('\n\n'); i >= 0; i = buf.indexOf('\n\n')) {
+          const block = buf.slice(0, i);
+          buf = buf.slice(i + 2);
+          if (block.startsWith('event: ready')) ready();
+          else if (block.startsWith('data: ')) events.push(JSON.parse(block.slice(6)));
+        }
+      }
+    } catch {
+      // aborted at the end of the run
+    }
+  })();
+  await isReady;
+  return events;
+}
+
+/** A write sent from a specific tab, like the browser client does. */
+const postFromTab = (client, tab, url, body) =>
+  fetch(base + url, {
+    method: 'POST',
+    headers: { cookie: client.cookieHeader(), 'x-csrf-token': client.jar.get('sd_csrf'), 'x-tab': tab, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+test('the echo of a tab\'s own write is marked own; other tabs and other people get a normal event', async () => {
+  const owner = await newUser('Echo Owner');
+  const other = await newUser('Echo Other');
+  const code = await createPds(owner.client);
+  await settle(); // let the set-up announcements go out first
+  const [mine, myOtherTab, theirs] = await Promise.all([
+    listenTab(owner.client, 'tab-owner-aaaa'),
+    listenTab(owner.client, 'tab-owner-bbbb'),
+    listenTab(other.client, 'tab-other-cccc'),
+  ]);
+
+  const r = await postFromTab(owner.client, 'tab-owner-aaaa', `/api/pds/${code}/comments`, { text: 'Adding one more detail', comment_type: 'point' });
+  assert.equal(r.status, 201);
+  await settle();
+  const hit = (events) => events.find((e) => e.topics.includes(`pds:${code}`));
+  assert.equal(hit(mine)?.own, true, JSON.stringify(mine));
+  assert.ok(hit(myOtherTab) && !hit(myOtherTab).own, 'the same user in another tab must still reload');
+  assert.ok(hit(theirs) && !hit(theirs).own);
+
+  // Someone else's write in the same moment is never marked own.
+  mine.length = 0;
+  await Promise.all([
+    postFromTab(owner.client, 'tab-owner-aaaa', `/api/pds/${code}/comments`, { text: 'Second detail', comment_type: 'point' }),
+    other.client.post(`/api/pds/${code}/comments`, { text: 'Me too', comment_type: 'point' }),
+  ]);
+  await settle();
+  assert.ok(mine.some((e) => e.topics.includes(`pds:${code}`)));
+  assert.ok(mine.filter((e) => e.topics.includes(`pds:${code}`)).some((e) => !e.own), JSON.stringify(mine));
+});
+
+test('a login tells staff "logins" only; a sign-up tells them "users"', async () => {
+  const admin = await newUser('Login Watcher');
+  await makeStaff(admin, 'admin');
+  const heard = await listen(admin.client);
+  const u = await newUser('Fresh Signup');
+  await settle();
+  assert.ok(heard.has('users'));
+  heard.clear();
+  const c = new Client();
+  assert.equal((await c.post('/api/auth/login', { identifier: u.email, password: u.password })).status, 200);
+  await settle();
+  assert.ok(heard.has('logins') && !heard.has('users'), [...heard].join());
+});
