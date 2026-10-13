@@ -48,18 +48,35 @@ export function issueSession(req, res, user, { remember = false, mfaPassed = fal
   return Number(r.lastInsertRowid);
 }
 
-/** Rotate the refresh token. Returns the user or null. */
+// A page load fires several requests at once, and every open tab refreshes on its own. When two of them carry
+// the same refresh token, the first rotates it and the second arrives with the old one. That old token stays
+// good for this long, so the late request is not treated as a logout (which cleared the winner's new cookies).
+const ROTATION_GRACE_S = 60;
+
+/** Rotate the refresh token. Returns { user, session } or null. */
 export function refreshSession(req, res) {
   const token = req.cookies[RT_COOKIE];
   if (!token) return null;
-  const s = db.prepare("SELECT * FROM sessions WHERE refresh_token_hash = ? AND revoked_at IS NULL AND expires_at > datetime('now')").get(sha256(token));
+  const hash = sha256(token);
+  const live = "revoked_at IS NULL AND expires_at > datetime('now')";
+  let s = db.prepare(`SELECT * FROM sessions WHERE refresh_token_hash = ? AND ${live}`).get(hash);
+  const late = !s;
+  if (late) {
+    s = db.prepare(`SELECT * FROM sessions WHERE prev_refresh_hash = ? AND rotated_at > datetime('now', ?) AND ${live}`).get(hash, `-${ROTATION_GRACE_S} seconds`);
+  }
   if (!s) return null;
   const user = db.prepare('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL AND is_blocked = 0').get(s.user_id);
   if (!user) return null;
+  if (late) {
+    // The winner already set the new refresh cookie; only hand this request a fresh access token.
+    const access = jwt.sign({ sid: s.id, sub: user.id }, JWT_SECRET, { expiresIn: ACCESS_TTL_S });
+    res.cookie(AT_COOKIE, access, { ...cookieBase, maxAge: s.remember ? REFRESH_TTL_DAYS.remember * 864e5 : undefined });
+    return { user, session: s };
+  }
   const next = randomToken(32);
-  db.prepare("UPDATE sessions SET refresh_token_hash = ?, last_used_at = datetime('now') WHERE id = ?").run(sha256(next), s.id);
+  db.prepare("UPDATE sessions SET refresh_token_hash = ?, prev_refresh_hash = ?, rotated_at = datetime('now'), last_used_at = datetime('now') WHERE id = ?").run(sha256(next), hash, s.id);
   setAuthCookies(res, s.id, user.id, next, !!s.remember);
-  return user;
+  return { user, session: s };
 }
 
 export function revokeSession(id) {

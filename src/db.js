@@ -54,7 +54,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   last_used_at TEXT NOT NULL DEFAULT (datetime('now')),
   expires_at TEXT NOT NULL,
-  revoked_at TEXT
+  revoked_at TEXT,
+  prev_refresh_hash TEXT,                      -- the token just replaced, honoured briefly (see refreshSession)
+  rotated_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
@@ -279,6 +281,10 @@ db.prepare("UPDATE settings SET value = 'IntelSquad' WHERE key = 'product_name' 
 if (!db.prepare("SELECT 1 FROM pragma_table_info('users') WHERE name = 'must_change_password'").get()) {
   db.exec('ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0');
 }
+if (!db.prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'prev_refresh_hash'").get()) {
+  db.exec('ALTER TABLE sessions ADD COLUMN prev_refresh_hash TEXT; ALTER TABLE sessions ADD COLUMN rotated_at TEXT;');
+}
+db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_prev_refresh ON sessions(prev_refresh_hash)');
 db.prepare('UPDATE users SET email_verified = 1, phone_verified = 1 WHERE email_verified = 0 OR phone_verified = 0').run();
 
 if (!db.prepare('SELECT 1 FROM slot_settings').get()) {

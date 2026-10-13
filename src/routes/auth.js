@@ -180,16 +180,15 @@ router.post('/mfa', limits.login, (req, res) => {
 router.get('/me', (req, res) => {
   let user = req.user;
   if (!user && req.cookies[RT_COOKIE]) {
-    user = refreshSession(req, res);
-    if (user) req.session = db.prepare('SELECT * FROM sessions WHERE user_id = ? ORDER BY last_used_at DESC, id DESC LIMIT 1').get(user.id);
+    const r = refreshSession(req, res);
+    if (r) ({ user, session: req.session } = r);
   }
   if (!user) return res.json({ user: null });
   res.json(meResponse(req, user));
 });
 
 router.post('/refresh', (req, res) => {
-  const user = refreshSession(req, res);
-  if (!user) {
+  if (!refreshSession(req, res)) {
     clearAuthCookies(res);
     return res.status(401).json({ error: 'Please log in again', code: 'unauthenticated' });
   }
