@@ -1,0 +1,6 @@
+{
+  "watch": ["src"],
+  "ext": "js,mjs,json",
+  "ignore": ["data/**", "test/**", "*.db", "*.db-*"],
+  "exec": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/index.js"
+}

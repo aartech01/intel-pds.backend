@@ -1,0 +1,27 @@
+{
+  "name": "squaddesk-server",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "node --watch --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/index.js",
+    "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/index.js",
+    "seed": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/seed.js",
+    "reset-2fa": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env reset-2fa.mjs",
+    "reset-password": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env reset-password.mjs",
+    "test": "node --disable-warning=ExperimentalWarning --test test/auth.test.js test/pds.test.js test/slots.test.js test/admin-delete.test.js test/live.test.js test/mfa-recovery.test.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cloudinary": "^2.11.0",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.7.1",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.4.0",
+    "qrcode": "^1.5.4"
+  }
+}
