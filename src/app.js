@@ -19,7 +19,8 @@ import { LIMITS } from './constants.js';
 
 export function createApp() {
   const app = express();
-  app.set('trust proxy', 1);
+  // Proxy hops in front of the app: 1 = host only (Railway); 2 = Vercel rewrite + Railway, so rate limits see the real client IP.
+  app.set('trust proxy', Number(process.env.TRUST_PROXY) || 1);
   app.disable('x-powered-by');
   app.use(securityHeaders);
   if (IS_PROD) {
