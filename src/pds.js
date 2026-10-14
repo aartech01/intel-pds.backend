@@ -3,6 +3,7 @@ import { STATUSES, isStaff } from './constants.js';
 import { notifyUser } from './messaging.js';
 import { signedUrl } from './storage.js';
 import { EVERYONE, either, pdsAudience, publish } from './live.js';
+import { emit, pdsPayload } from './webhooks.js';
 
 const sqlNow = () => db.prepare("SELECT datetime('now') AS t").get().t;
 export const DELETED_NAME = 'Deleted user';
@@ -50,6 +51,12 @@ export function changeStatus(pds, to, actor, { note = null, kind = 'team', notif
   db.prepare('INSERT INTO status_history (pds_id, old_status, new_status, changed_by, actor, note) VALUES (?, ?, ?, ?, ?, ?)').run(pds.id, pds.status, to, actor?.id ?? null, kind, note);
   publish(['pds', `pds:${pds.pds_code}`], either(pdsAudience(pds), pdsAudience({ ...pds, status: to })));
   publish(['slots'], EVERYONE);
+  // Automation (n8n). New submissions have their own richer 'pds.submitted' event.
+  if (to !== 'submitted') {
+    emit('pds.status_changed', () => ({ ...pdsPayload(getPdsById(pds.id)), from: pds.status, to, label: STATUSES[to].label, note, changed_by: kind }), {
+      check: () => getPdsById(pds.id)?.status === to,
+    });
+  }
 
   if (notify && actor?.id !== pds.user_id) {
     const label = STATUSES[to].label;
@@ -70,10 +77,14 @@ export function touch(pdsId) {
 
 const authorName = (u) => (u == null || u.deleted_at ? DELETED_NAME : u.display_name);
 
+// Prepared once: pdsCard runs for every card on every board and list page.
+const ownerStmt = db.prepare('SELECT display_name, deleted_at FROM users WHERE id = ?');
+const latestBookingStmt = db.prepare("SELECT lane, start_week, end_week, status FROM bookings WHERE pds_id = ? AND status != 'cancelled' ORDER BY id DESC LIMIT 1");
+
 /** Card / list shape - only the display name is public (CD-05). */
 export function pdsCard(p, viewer) {
-  const owner = db.prepare('SELECT display_name, deleted_at FROM users WHERE id = ?').get(p.user_id);
-  const booking = db.prepare("SELECT lane, start_week, end_week, status FROM bookings WHERE pds_id = ? AND status != 'cancelled' ORDER BY id DESC LIMIT 1").get(p.id);
+  const owner = ownerStmt.get(p.user_id);
+  const booking = latestBookingStmt.get(p.id);
   return {
     code: p.pds_code,
     title: p.title,

@@ -285,6 +285,18 @@ if (!db.prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'prev_
   db.exec('ALTER TABLE sessions ADD COLUMN prev_refresh_hash TEXT; ALTER TABLE sessions ADD COLUMN rotated_at TEXT;');
 }
 db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_prev_refresh ON sessions(prev_refresh_hash)');
+// Indexes for the busiest lookups: each board card's latest booking, the viewer's upvotes, schedule weeks,
+// a PDS's history, open reports and the review queue (added for speed; safe to run on every start).
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_bookings_pds ON bookings(pds_id, id);
+  CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status, start_week);
+  CREATE INDEX IF NOT EXISTS idx_upvotes_user ON upvotes(user_id);
+  CREATE INDEX IF NOT EXISTS idx_slots_week ON slots(week_start);
+  CREATE INDEX IF NOT EXISTS idx_status_history_pds ON status_history(pds_id, id);
+  CREATE INDEX IF NOT EXISTS idx_status_history_created ON status_history(created_at);
+  CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status);
+  CREATE INDEX IF NOT EXISTS idx_pds_submitted ON pds(status, submitted_at);
+`);
 db.prepare('UPDATE users SET email_verified = 1, phone_verified = 1 WHERE email_verified = 0 OR phone_verified = 0').run();
 
 if (!db.prepare('SELECT 1 FROM slot_settings').get()) {

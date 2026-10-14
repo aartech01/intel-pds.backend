@@ -15,6 +15,7 @@ import authRoutes from './routes/auth.js';
 import meRoutes from './routes/me.js';
 import pdsRoutes from './routes/pds.js';
 import adminRoutes from './routes/admin.js';
+import integrationRoutes from './routes/integrations.js';
 import { LIMITS } from './constants.js';
 
 export function createApp() {
@@ -60,6 +61,9 @@ export function createApp() {
     res.redirect(`/start?src=${encodeURIComponent(qr.slug)}`);
   });
 
+  // Automation (n8n): bearer-token API, no cookies or CSRF. Mounted before the session middleware.
+  app.use('/api/integrations', express.json({ limit: '200kb' }), integrationRoutes);
+
   app.use('/api', parseCookies, express.json({ limit: '200kb' }), ensureCsrfCookie, csrfProtect, authenticate, announceWrites);
   app.get('/api/live', liveStream);
   app.use('/api', publicRoutes);
@@ -72,8 +76,16 @@ export function createApp() {
   // Serve the built client in production.
   const clientDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../client/dist');
   if (fs.existsSync(clientDist)) {
-    app.use(express.static(clientDist, { maxAge: '1h', index: false }));
-    app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(path.join(clientDist, 'index.html')));
+    // Hashed build files never change: cache them for a year. Everything else (index.html, logos) is revalidated,
+    // so a new deploy shows up on the next visit.
+    app.use(
+      express.static(clientDist, {
+        index: false,
+        setHeaders: (res, file) =>
+          res.setHeader('Cache-Control', /[\\/]assets[\\/]/.test(file) ? 'public, max-age=31536000, immutable' : 'no-cache'),
+      }),
+    );
+    app.get(/^\/(?!api\/).*/, (_req, res) => res.set('Cache-Control', 'no-cache').sendFile(path.join(clientDist, 'index.html')));
   }
 
   // eslint-disable-next-line no-unused-vars

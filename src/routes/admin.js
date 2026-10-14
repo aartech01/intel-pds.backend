@@ -14,6 +14,7 @@ import {
   moveBooking, queueView, releaseBooking, setCapacity, slotOptions, swapBookings, syncBookingStatus, unblockWeek,
 } from '../slots.js';
 import { notifyUser } from '../messaging.js';
+import { emit, pdsPayload } from '../webhooks.js';
 import { BCRYPT_COST, PUBLIC_URL } from '../config.js';
 import { labelFor } from './pds.js';
 import { deleteAccount, isLastSuperAdmin } from './me.js';
@@ -244,6 +245,7 @@ router.patch('/pds/:code', (req, res) => {
   });
   touch(p.id);
   if (changes.length) log(req, 'pds_update', 'pds', p.pds_code, changes.join('; '));
+  if (req.body?.assigned_to !== undefined) emit('pds.assigned', () => pdsPayload(getPdsById(p.id)));
   res.json({ ok: true });
 });
 
@@ -266,6 +268,7 @@ router.post('/pds/:code/progress', (req, res) => {
   db.prepare("UPDATE pds SET progress_percent = ?, updated_at = datetime('now') WHERE id = ?").run(percent, p.id);
   notifyUser(p.user_id, { type: 'progress', message: `${p.pds_code} is ${percent}% done${note ? ` - ${note}` : ''}`, link: `/pds/${p.pds_code}` });
   log(req, 'pds_progress', 'pds', p.pds_code, `${percent}%`);
+  emit('pds.progress', () => ({ ...pdsPayload(getPdsById(p.id)), note, by: req.user.display_name }));
   res.status(201).json({ ok: true });
 });
 

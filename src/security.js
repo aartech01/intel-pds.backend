@@ -86,6 +86,7 @@ export const limits = {
   otp: [otpIp, otpAccount],
   reset: limiter(60, 30, 'Too many reset requests. Try again later.'),
   write: limiter(1, 60, 'You are doing that too often. Slow down a little.', { perAccount: true }),
+  integration: limiter(1, 60, 'Too many automation requests. Slow down a little.'),
 };
 
 // ---------- CAPTCHA (Cloudflare Turnstile) ----------

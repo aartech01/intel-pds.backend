@@ -14,6 +14,7 @@ import {
 } from '../slots.js';
 import { upload, validateUploads, saveAttachments, deleteStoredFiles, removeTemp } from '../storage.js';
 import { notifyAdmins, notifyUser } from '../messaging.js';
+import { emit, pdsPayload } from '../webhooks.js';
 
 const router = Router();
 router.use(['/board', '/dashboard', '/pds-similar', '/pds', '/comments'], requireUser);
@@ -166,6 +167,7 @@ router.post('/pds', limits.write, notAdmin, upload.array('files', LIMITS.filesPe
 function submitPds(p, user) {
   const pds = changeStatus(p, 'submitted', user, { kind: 'user' });
   notifyAdmins(`New PDS ${pds.pds_code}: ${pds.title} (${pds.urgency} urgency)`, `/admin/pds/${pds.pds_code}`);
+  emit('pds.submitted', () => pdsPayload(getPdsById(pds.id), { withText: true }));
   notifyUser(user, { type: 'status', message: `${pds.pds_code} submitted. The team reviews new PDS within 48 hours.`, link: `/pds/${pds.pds_code}` });
   return pds;
 }
@@ -350,6 +352,10 @@ router.post('/pds/:code/comments', (req, res) => {
   if (parent && parent.user_id && parent.user_id !== req.user.id && parent.user_id !== p.user_id) {
     notifyUser(parent.user_id, { type: 'comment', message: `${who} replied to your comment on ${p.pds_code}`, link: `/pds/${p.pds_code}#c${id}` });
   }
+  emit('comment.created', () => ({
+    pds: pdsPayload(getPdsById(p.id)),
+    comment: { id, by: req.user.display_name, team: staff, owner: mine, type, reply: !!parent, text },
+  }));
   // The owner answering a team question moves the PDS back to review.
   if (mine && p.status === 'need_info') {
     changeStatus(p, 'under_review', req.user, { kind: 'user', note: 'Owner replied' });
@@ -391,6 +397,12 @@ router.post('/comments/:id/report', (req, res) => {
   const reason = ['spam', 'abusive', 'other'].includes(req.body?.reason) ? req.body.reason : 'other';
   db.prepare('INSERT OR IGNORE INTO reports (comment_id, reported_by, reason) VALUES (?, ?, ?)').run(c.id, req.user.id, reason);
   notifyAdmins(`Comment reported on ${p.pds_code} (${reason})`, '/admin/moderation');
+  emit('comment.reported', () => ({
+    pds: pdsPayload(p),
+    comment: { id: c.id, text: c.text },
+    reason,
+    open_reports: db.prepare("SELECT COUNT(*) AS n FROM reports WHERE status = 'open'").get().n,
+  }));
   res.json({ ok: true });
 });
 

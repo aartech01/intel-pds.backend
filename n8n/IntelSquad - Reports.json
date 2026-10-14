@@ -1,0 +1,221 @@
+{
+  "name": "IntelSquad - Daily & weekly reports",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## IntelSquad · Reports\nEvery day at 09:00 (Asia/Kolkata): the **daily** report. On Mondays the **weekly** report is sent too.\n\nEach report goes to **Telegram** and adds one row to the Google Sheets tab `Reports`.\n\nShows: new PDS, approvals, deliveries, comments, new users, **overdue reviews**, work in development, the slot queue and free teams.\n\n**Before activating:** edit *Report settings* and pick 3 credentials (IntelSquad API token, Telegram, Google Sheets).",
+        "height": 520,
+        "width": 420,
+        "color": 7
+      },
+      "id": "73546500-f73f-42f8-949d-eece4291bca5",
+      "name": "Read me",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -620,
+        -340
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "2bf3db5b-2d2a-411d-b310-ba467d0e3eb4",
+      "name": "Every day 09:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -160,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===== Report settings: edit these =====\nconst cfg = {\n  api_base: 'https://intel-pdsbackend-production.up.railway.app',\n  chat_id: 'PASTE_YOUR_TELEGRAM_CHAT_ID',\n  weekly_on: 1, // weekday for the weekly report: 1 = Monday ... 7 = Sunday\n};\n// ========================================\n// Every day: the daily report. On the weekly day: the weekly report too.\nconst periods = ['daily'];\nif ($now.weekday === cfg.weekly_on) periods.push('weekly');\nreturn periods.map((period) => ({ json: { period, ...cfg } }));\n"
+      },
+      "id": "215aad0d-814c-4d9f-903e-ea77370c4365",
+      "name": "Report settings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.api_base }}/api/integrations/report?period={{ $json.period }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "127a4b34-4c50-4efc-9dca-ce29b7eb9d88",
+      "name": "Get report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst cut = (s, n) => { s = String(s ?? ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };\n\nconst list = (rows, fmt, max = 8) => rows.length ? rows.slice(0, max).map(fmt).join('\\n') + (rows.length > max ? `\\n…and ${rows.length - max} more` : '') : '  none';\nconst link = (r) => `<a href=\"${esc(r.url)}\">${esc(r.code)}</a>`;\nreturn $input.all().map((item, i) => {\n  const r = item.json;\n  const cfg = $('Report settings').all()[i]?.json ?? {};\n  const p = r.in_period, n = r.now;\n  const title = r.period === 'weekly' ? '📊 <b>IntelSquad weekly report</b> (last 7 days)' : '☀️ <b>IntelSquad daily report</b> (last 24 hours)';\n  const status = Object.entries(n.by_status).map(([k, v]) => `${esc(k)}: ${v}`).join(' · ') || 'no PDS yet';\n  const text = [\n    title,\n    '',\n    `<b>New PDS: ${p.new_pds.length}</b>`,\n    list(p.new_pds, (x) => `  • ${link(x)} ${esc(cut(x.title, 60))} (${esc(x.urgency)})`),\n    `Approved ${p.approved} · Rejected ${p.rejected} · Delivered ${p.delivered} · Closed ${p.closed}`,\n    `Comments ${p.comments} · New users ${p.new_users}`,\n    '',\n    `<b>⏰ Overdue reviews (over ${n.review_target_hours} h): ${n.overdue_reviews.length}</b>`,\n    list(n.overdue_reviews, (x) => `  • ${link(x)} ${esc(cut(x.title, 60))}`),\n    `Waiting for the owner's answer: ${n.need_more_info} · Open comment reports: ${n.open_reports}`,\n    '',\n    `<b>🛠 In development: ${n.in_development.length}</b>`,\n    list(n.in_development, (x) => `  • ${link(x)} ${esc(cut(x.title, 50))} - ${esc(x.status)} ${x.progress}%`),\n    `<b>⏳ Waiting for a slot: ${n.waiting_for_slot.length}</b>`,\n    list(n.waiting_for_slot, (x) => `  • ${link(x)} ${esc(cut(x.title, 50))}${x.estimated_start ? ` - est. ${esc(x.estimated_start)}` : ''}`),\n    '',\n    `Slots this week: ${n.slots_this_week.busy}/${n.slots_this_week.teams} teams busy, ${n.slots_this_week.free} free${n.slots_this_week.blocked ? `, ${n.slots_this_week.blocked} blocked` : ''}`,\n    `By status: ${status}`,\n    n.avg_rating ? `Average rating: ${n.avg_rating}/5` : '',\n  ].filter((l) => l !== null).join('\\n');\n  return { json: {\n    chat_id: cfg.chat_id,\n    text: cut(text, 4000),\n    row: {\n      Date: r.generated_at, Period: r.period, 'New PDS': p.new_pds.length, Approved: p.approved, Rejected: p.rejected,\n      Delivered: p.delivered, Closed: p.closed, Comments: p.comments, 'New users': p.new_users,\n      'Overdue reviews': n.overdue_reviews.length, 'In development': n.in_development.length,\n      'Waiting for slot': n.waiting_for_slot.length, 'Open reports': n.open_reports,\n      'Teams busy': n.slots_this_week.busy, 'Teams free': n.slots_this_week.free, 'Avg rating': n.avg_rating ?? '',\n    },\n  } };\n});\n"
+      },
+      "id": "64948903-48aa-4339-a975-f6749834d4f8",
+      "name": "Format report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      },
+      "id": "2da7345d-5522-46f5-8497-119098d4faeb",
+      "name": "Send report",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        740,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map((i) => ({ json: i.json.row }));\n"
+      },
+      "id": "0ca14a6f-3df9-44be-be4c-b7bf187d25e0",
+      "name": "Report row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        740,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "PASTE_YOUR_GOOGLE_SHEET_URL",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Reports",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "8d427871-00f8-40a3-8c55-7d77036a578b",
+      "name": "Save to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        960,
+        100
+      ]
+    }
+  ],
+  "connections": {
+    "Every day 09:00": {
+      "main": [
+        [
+          {
+            "node": "Report settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report settings": {
+      "main": [
+        [
+          {
+            "node": "Get report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get report": {
+      "main": [
+        [
+          {
+            "node": "Format report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format report": {
+      "main": [
+        [
+          {
+            "node": "Send report",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Report row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report row": {
+      "main": [
+        [
+          {
+            "node": "Save to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata",
+    "saveManualExecutions": true
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
